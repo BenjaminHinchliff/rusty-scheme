@@ -5,7 +5,7 @@ use crate::{
     lexer::{Lexer, Token},
 };
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
     #[error("unexpected end of file")]
     UnexpectedEOF,
@@ -86,7 +86,9 @@ impl<'a> Parser<'a> {
             list.push(self.parse()?);
 
             let next = &self.peek()?.0;
+
             if next == &Token::Close || next == &Token::Dot {
+                self.next()?;
                 break;
             }
         }
@@ -118,11 +120,35 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::SchemeVal::*;
 
     #[test]
     fn basic_expr() {
         let ast = Parser::new("(+ 2 3)").parse();
 
-        panic!("{:?}", ast);
+        assert_eq!(
+            ast,
+            Ok(List(
+                vec![Atom("+".to_string()), Number(2), Number(3)],
+                None
+            ))
+        );
+    }
+
+    #[test]
+    fn nested_operations() {
+        let ast = Parser::new("(* (- 10 9) 2)").parse();
+
+        assert_eq!(
+            ast,
+            Ok(List(
+                vec![
+                    Atom("*".to_string()),
+                    List(vec![Atom("-".to_string()), Number(10), Number(9)], None),
+                    Number(2)
+                ],
+                None
+            ))
+        );
     }
 }

@@ -2,7 +2,7 @@ use std::fmt;
 
 use logos::Logos;
 
-#[derive(Logos, Debug, PartialEq)]
+#[derive(Logos, Debug, PartialEq, Eq)]
 pub enum Token {
     #[regex(r"[a-zA-Z!$%&*+\-./:<=>?@^_~][a-zA-Z0-9!$%&*+\-./:<=>?@^_~]*")]
     Atom,
@@ -134,6 +134,24 @@ mod tests {
                 Token::Open,
                 Token::Atom,
                 Token::Number,
+                Token::Number,
+                Token::Close,
+            ],
+        )
+    }
+
+    #[test]
+    fn nested() {
+        check_many(
+            "(+ (- 10 5) 2)",
+            &[
+                Token::Open,
+                Token::Atom,
+                Token::Open,
+                Token::Atom,
+                Token::Number,
+                Token::Number,
+                Token::Close,
                 Token::Number,
                 Token::Close,
             ],
