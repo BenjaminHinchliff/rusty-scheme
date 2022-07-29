@@ -36,21 +36,21 @@ impl<'a> Parser<'a> {
         self.lexer.next().ok_or(ParseError::UnexpectedEOF)
     }
 
-    fn check(&mut self, token: Token) -> ParseResult<()> {
-        let (next, _) = self.next()?;
-
-        if next == token {
-            Ok(())
-        } else {
-            Err(ParseError::UnexpectedToken {
-                given: next,
-                expected: token,
-            })
-        }
-    }
+    // fn check(&mut self, token: Token) -> ParseResult<()> {
+    //     let (next, _) = self.next()?;
+    //
+    //     if next == token {
+    //         Ok(())
+    //     } else {
+    //         Err(ParseError::UnexpectedToken {
+    //             given: next,
+    //             expected: token,
+    //         })
+    //     }
+    // }
 
     pub fn parse(&mut self) -> ParseResult<SchemeVal> {
-        let (token, slice) = self.peek()?;
+        let (token, _) = self.peek()?;
 
         match token {
             Token::String => self.parse_string(),
@@ -78,7 +78,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_list(&mut self) -> ParseResult<SchemeVal> {
-        let (token, slice) = self.next()?;
+        let (token, _) = self.next()?;
         debug_assert_eq!(token, Token::Open);
 
         let mut list = Vec::new();
@@ -88,12 +88,21 @@ impl<'a> Parser<'a> {
             let next = &self.peek()?.0;
 
             if next == &Token::Close || next == &Token::Dot {
-                self.next()?;
                 break;
             }
         }
 
-        Ok(SchemeVal::List(list, None))
+        let tail = if self.peek()?.0 == Token::Dot {
+            self.next()?;
+            let tail = self.parse()?;
+            self.next()?;
+            Some(Box::new(tail))
+        } else {
+            self.next()?;
+            None
+        };
+
+        Ok(SchemeVal::List(list, tail))
     }
 
     fn parse_string(&mut self) -> ParseResult<SchemeVal> {
@@ -120,35 +129,42 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::SchemeVal::*;
+    use expect_test::{expect, Expect};
+
+    fn check(ast: SchemeVal, expect: Expect) {
+        let actual = ast.to_string();
+        expect.assert_eq(&actual);
+    }
 
     #[test]
     fn basic_expr() {
-        let ast = Parser::new("(+ 2 3)").parse();
-
-        assert_eq!(
-            ast,
-            Ok(List(
-                vec![Atom("+".to_string()), Number(2), Number(3)],
-                None
-            ))
+        check(
+            Parser::new("(+ 2 3)").parse().unwrap(),
+            expect!["List@(Atom@+ Number@2 Number@3)"],
         );
     }
 
     #[test]
     fn nested_operations() {
-        let ast = Parser::new("(* (- 10 9) 2)").parse();
+        check(
+            Parser::new("(* (- 10 9) 2)").parse().unwrap(),
+            expect!["List@(Atom@* List@(Atom@- Number@10 Number@9) Number@2)"],
+        );
+    }
 
-        assert_eq!(
-            ast,
-            Ok(List(
-                vec![
-                    Atom("*".to_string()),
-                    List(vec![Atom("-".to_string()), Number(10), Number(9)], None),
-                    Number(2)
-                ],
-                None
-            ))
+    #[test]
+    fn dotted_list() {
+        check(
+            Parser::new("(1 2 . 3)").parse().unwrap(),
+            expect!["List@(Number@1 Number@2 . Number@3)"],
+        );
+    }
+
+    #[test]
+    fn define() {
+        check(
+            Parser::new("(define two 2)").parse().unwrap(),
+            expect!["List@(Atom@define Atom@two Number@2)"],
         );
     }
 }
