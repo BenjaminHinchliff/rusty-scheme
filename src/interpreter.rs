@@ -1,13 +1,29 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast::SchemeVal, parser::Parser};
+use crate::{
+    ast::SchemeVal,
+    parser::{ParseError, Parser},
+};
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum InterpretError {
+    #[error("Parse error: {0}")]
+    ParseError(#[from] ParseError),
     #[error("Failed to define {symbol} - {error}")]
     DefineError { symbol: String, error: String },
     #[error("Unbound symbol: {symbol}")]
     UnboundSymbol { symbol: String },
+    #[error("Improper arg count in call to {function} - given {given} but expected {expected}")]
+    ImproperArgCount {
+        function: String,
+        given: usize,
+        expected: usize,
+    },
+    #[error(
+        "Expected function call but was given {}",
+        given.as_ref().map(|g| g.to_string()).unwrap_or_else(|| String::from("()"))
+    )]
+    ExpectedFunctionCall { given: Option<SchemeVal> },
 }
 
 pub type InterpretResult<T> = Result<T, InterpretError>;
@@ -33,12 +49,20 @@ impl Interpreter {
     }
 
     pub fn interpret_str(&mut self, src: &str) -> InterpretResult<Option<Symbol>> {
-        let ast = Parser::new(src).parse().unwrap();
+        let ast = Parser::new(src).parse()?;
 
         self.interpret(ast)
     }
 
-    pub fn interpret(&mut self, ast: SchemeVal) -> InterpretResult<Option<Symbol>> {
+    pub fn interpret(&mut self, ast: Vec<SchemeVal>) -> InterpretResult<Option<Symbol>> {
+        let mut symbol = None;
+        for val in ast {
+            symbol = self.interpret_one(val)?;
+        }
+        Ok(symbol)
+    }
+
+    pub fn interpret_one(&mut self, ast: SchemeVal) -> InterpretResult<Option<Symbol>> {
         match ast {
             s @ SchemeVal::String(_) => Ok(Some(Rc::new(s))),
             n @ SchemeVal::Number(_) => Ok(Some(Rc::new(n))),
@@ -71,11 +95,15 @@ impl Interpreter {
     fn interpret_call(&mut self, list: Vec<SchemeVal>) -> InterpretResult<Option<Symbol>> {
         let mut iter = list.into_iter();
 
-        let name = iter.next().unwrap().into_atom().unwrap();
+        let name = iter
+            .next()
+            .ok_or(InterpretError::ExpectedFunctionCall { given: None })?
+            .into_atom()
+            .map_err(|e| InterpretError::ExpectedFunctionCall { given: Some(e) })?;
 
         if name == "define" {
             let symbol = iter.next().unwrap().into_atom().unwrap();
-            let definition = self.interpret(iter.next().unwrap())?.unwrap();
+            let definition = self.interpret_one(iter.next().unwrap())?.unwrap();
 
             self.add_symbol(symbol, definition);
             Ok(None)
@@ -92,7 +120,7 @@ impl Interpreter {
                 .map(|n| -> InterpretResult<_> {
                     Ok(match n {
                         SchemeVal::Atom(sym) => self.get_symbol(&sym).unwrap().clone(),
-                        n => self.interpret(n)?.unwrap(),
+                        n => self.interpret_one(n)?.unwrap(),
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?
@@ -109,37 +137,29 @@ impl Interpreter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use expect_test::{expect, Expect};
 
-    fn check(src: &str, expect: Expect) {
-        let actual = Interpreter::new()
-            .interpret_str(src)
-            .unwrap()
-            .map(|v| v.to_string())
-            .unwrap_or_else(String::new);
-        expect.assert_eq(&actual)
+    fn check(src: &str, expect: Option<SchemeVal>) {
+        let actual = Interpreter::new().interpret_str(src).unwrap();
+        assert_eq!(actual, expect.map(Rc::new));
     }
 
     #[test]
     fn basic_expr() {
-        check("(+ 9 10 2)", expect!["21"]);
+        check("(+ 9 10 2)", Some(SchemeVal::Number(21)));
     }
 
     #[test]
     fn nested_expr() {
-        assert_eq!(
-            Interpreter::new().interpret_str("(* (- 10 9) 2)").unwrap(),
-            Some(Rc::new(SchemeVal::Number(2)))
-        );
+        check("(* (- 10 8) (+ 10 9))", Some(SchemeVal::Number(38)));
     }
 
     #[test]
-    fn def_test() {
-        let mut interpreter = Interpreter::new();
-        assert_eq!(interpreter.interpret_str("(define two 2)").unwrap(), None);
-        assert_eq!(
-            interpreter.interpret_str("(+ two 2)").unwrap(),
-            Some(Rc::new(SchemeVal::Number(4)))
-        );
+    fn define() {
+        let src = r#"
+            (define two 2)
+            two
+        "#;
+
+        check(src, Some(SchemeVal::Number(2)));
     }
 }

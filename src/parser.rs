@@ -49,7 +49,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> ParseResult<SchemeVal> {
+    pub fn parse(&mut self) -> ParseResult<Vec<SchemeVal>> {
+        let mut vals = Vec::new();
+        while self.lexer.peek().is_some() {
+            vals.push(self.parse_one()?);
+        }
+        Ok(vals)
+    }
+
+    pub fn parse_one(&mut self) -> ParseResult<SchemeVal> {
         let (token, _) = self.peek()?;
 
         match token {
@@ -83,7 +91,7 @@ impl<'a> Parser<'a> {
 
         let mut list = Vec::new();
         loop {
-            list.push(self.parse()?);
+            list.push(self.parse_one()?);
 
             let next = &self.peek()?.0;
 
@@ -94,7 +102,7 @@ impl<'a> Parser<'a> {
 
         let tail = if self.peek()?.0 == Token::Dot {
             self.next()?;
-            let tail = self.parse()?;
+            let tail = self.parse_one()?;
             Some(Box::new(tail))
         } else {
             None
@@ -131,28 +139,37 @@ mod tests {
     use super::*;
     use expect_test::{expect, Expect};
 
-    fn check(src: &str, expect: Expect) {
-        let actual = Parser::new(src).parse().unwrap().to_string();
-        expect.assert_eq(&actual);
+    fn check(src: &str, expects: &[Expect]) {
+        let actual = Parser::new(src).parse().unwrap();
+        assert_eq!(actual.len(), expects.len());
+        for (val, expect) in actual.iter().zip(expects) {
+            expect.assert_eq(&val.to_string());
+        }
     }
 
     #[test]
     fn basic_expr() {
-        check("(+ 2 3)", expect!["(+ 2 3)"]);
+        check("(+ 2 3)", &[expect!["(+ 2 3)"]]);
     }
 
     #[test]
     fn nested_operations() {
-        check("(* (- 10 9) 2)", expect!["(* (- 10 9) 2)"]);
+        check("(* (- 10 9) 2)", &[expect!["(* (- 10 9) 2)"]]);
     }
 
     #[test]
     fn dotted_list() {
-        check("(1 2 . 3)", expect!["(1 2 . 3)"]);
+        check("(1 2 . 3)", &[expect!["(1 2 . 3)"]]);
     }
 
     #[test]
     fn define() {
-        check("(define two 2)", expect!["(define two 2)"]);
+        check(
+            r#"
+            (define two 2)
+            two
+            "#,
+            &[expect!["(define two 2)"], expect!["two"]],
+        );
     }
 }
