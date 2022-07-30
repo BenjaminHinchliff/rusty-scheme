@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use ansi_term::Color;
+use ansi_term::{Color, ANSIString, ANSIStrings};
 use rusty_scheme::Interpreter;
 
 macro_rules! print_flush {
@@ -17,11 +17,11 @@ fn main() {
         print_flush!("scm> ");
 
         let mut input = String::new();
-        io::stdin()
+        let bytes = io::stdin()
             .read_line(&mut input)
             .expect("failed to flush stdin");
 
-        if ["q", "quit", "exit"].contains(&input.trim()) {
+        if bytes == 0 || ["q", "quit", "exit"].contains(&input.trim()) {
             break;
         } else if input.chars().all(char::is_whitespace) {
             continue;
@@ -34,7 +34,11 @@ fn main() {
                 }
             }
             Err(err) => {
-                eprintln!("{} Error interpreting: {}", Color::Red.paint("!>"), err);
+                let strings: &[ANSIString<'static>] = &[
+                    Color::Red.paint("!> Error interpreting: "),
+                    Color::Red.bold().paint(err.to_string()),
+                ];
+                eprintln!("{}", ANSIStrings(strings));
             }
         }
     }
