@@ -36,18 +36,18 @@ impl<'a> Parser<'a> {
         self.lexer.next().ok_or(ParseError::UnexpectedEOF)
     }
 
-    // fn check(&mut self, token: Token) -> ParseResult<()> {
-    //     let (next, _) = self.next()?;
-    //
-    //     if next == token {
-    //         Ok(())
-    //     } else {
-    //         Err(ParseError::UnexpectedToken {
-    //             given: next,
-    //             expected: token,
-    //         })
-    //     }
-    // }
+    fn check(&mut self, token: Token) -> ParseResult<()> {
+        let (next, _) = self.next()?;
+
+        if next == token {
+            Ok(())
+        } else {
+            Err(ParseError::UnexpectedToken {
+                given: next,
+                expected: token,
+            })
+        }
+    }
 
     pub fn parse(&mut self) -> ParseResult<SchemeVal> {
         let (token, _) = self.peek()?;
@@ -95,12 +95,12 @@ impl<'a> Parser<'a> {
         let tail = if self.peek()?.0 == Token::Dot {
             self.next()?;
             let tail = self.parse()?;
-            self.next()?;
             Some(Box::new(tail))
         } else {
-            self.next()?;
             None
         };
+
+        self.check(Token::Close)?;
 
         Ok(SchemeVal::List(list, tail))
     }
@@ -131,40 +131,28 @@ mod tests {
     use super::*;
     use expect_test::{expect, Expect};
 
-    fn check(ast: SchemeVal, expect: Expect) {
-        let actual = ast.to_string();
+    fn check(src: &str, expect: Expect) {
+        let actual = Parser::new(src).parse().unwrap().to_string();
         expect.assert_eq(&actual);
     }
 
     #[test]
     fn basic_expr() {
-        check(
-            Parser::new("(+ 2 3)").parse().unwrap(),
-            expect!["List@(Atom@+ Number@2 Number@3)"],
-        );
+        check("(+ 2 3)", expect!["(+ 2 3)"]);
     }
 
     #[test]
     fn nested_operations() {
-        check(
-            Parser::new("(* (- 10 9) 2)").parse().unwrap(),
-            expect!["List@(Atom@* List@(Atom@- Number@10 Number@9) Number@2)"],
-        );
+        check("(* (- 10 9) 2)", expect!["(* (- 10 9) 2)"]);
     }
 
     #[test]
     fn dotted_list() {
-        check(
-            Parser::new("(1 2 . 3)").parse().unwrap(),
-            expect!["List@(Number@1 Number@2 . Number@3)"],
-        );
+        check("(1 2 . 3)", expect!["(1 2 . 3)"]);
     }
 
     #[test]
     fn define() {
-        check(
-            Parser::new("(define two 2)").parse().unwrap(),
-            expect!["List@(Atom@define Atom@two Number@2)"],
-        );
+        check("(define two 2)", expect!["(define two 2)"]);
     }
 }

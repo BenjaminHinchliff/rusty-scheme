@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ansi_term = "0.12.1"
 enum-as-inner = "0.5.0"
 expect-test = "1.4.0"
 logos = "0.12.1"

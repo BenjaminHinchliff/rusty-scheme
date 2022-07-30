@@ -28,10 +28,10 @@ impl fmt::Display for SchemeVal {
         }
 
         match self {
-            SchemeVal::Atom(s) => write!(f, "Atom@{}", s),
+            SchemeVal::Atom(s) => write!(f, "{}", s),
             SchemeVal::List(l, t) => write!(
                 f,
-                "List@({}{})",
+                "({}{})",
                 list_to_string(l),
                 if let Some(t) = t {
                     format!(" . {}", t)
@@ -39,9 +39,9 @@ impl fmt::Display for SchemeVal {
                     String::new()
                 }
             ),
-            SchemeVal::Number(n) => write!(f, "Number@{}", n),
-            SchemeVal::String(s) => write!(f, "String@{}", s),
-            SchemeVal::Bool(b) => write!(f, "Bool@{}", b),
+            SchemeVal::Number(n) => write!(f, "{}", n),
+            SchemeVal::String(s) => write!(f, "\"{}\"", s),
+            SchemeVal::Bool(b) => write!(f, "{}", if *b { "#t" } else { "#f" }),
         }
     }
 }

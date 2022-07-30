@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 
+use ansi_term::Color;
 use rusty_scheme::Interpreter;
 
 macro_rules! print_flush {
@@ -13,7 +14,6 @@ fn main() {
     let mut interpreter = Interpreter::new();
 
     loop {
-        println!();
         print_flush!("scm> ");
 
         let mut input = String::new();
@@ -28,9 +28,13 @@ fn main() {
         }
 
         match interpreter.interpret_str(&input) {
-            Ok(val) => println!("{}", val),
+            Ok(val) => {
+                if let Some(val) = val {
+                    println!("{}", val)
+                }
+            }
             Err(err) => {
-                eprintln!("!> Error interpreting: {}", err);
+                eprintln!("{} Error interpreting: {}", Color::Red.paint("!>"), err);
             }
         }
     }
