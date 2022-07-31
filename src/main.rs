@@ -21,6 +21,7 @@ fn main() {
             .read_line(&mut input)
             .expect("failed to flush stdin");
 
+        // EOF or exit prompt
         if bytes == 0 || ["q", "quit", "exit"].contains(&input.trim()) {
             break;
         } else if input.chars().all(char::is_whitespace) {
