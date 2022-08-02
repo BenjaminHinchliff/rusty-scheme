@@ -91,13 +91,12 @@ impl<'a> Parser<'a> {
 
         let mut list = Vec::new();
         loop {
-            list.push(self.parse_one()?);
-
-            let next = &self.peek()?.0;
-
-            if next == &Token::Close || next == &Token::Dot {
+            let (next, _) = self.peek()?;
+            if *next == Token::Close || *next == Token::Dot {
                 break;
             }
+
+            list.push(self.parse_one()?);
         }
 
         let tail = if self.peek()?.0 == Token::Dot {
