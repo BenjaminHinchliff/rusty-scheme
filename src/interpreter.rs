@@ -49,18 +49,23 @@ pub enum InterpretError {
 
 pub type InterpretResult<T> = Result<T, InterpretError>;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SchemeFunction {
+    args: Vec<SchemeType>,
+    body: Box<Symbol>,
+}
+
 #[derive(Clone)]
 pub enum Function {
-    External(fn(Vec<Symbol>) -> Symbol),
-    Scheme(Box<Symbol>),
+    External(fn(Vec<Symbol>) -> InterpretResult<Symbol>),
+    Scheme(SchemeFunction),
 }
 
 impl Function {
-    pub fn call(&self, args: Vec<Symbol>) -> Symbol {
-        // TODO: verify args
+    pub fn call(&self, args: Vec<Symbol>) -> InterpretResult<Symbol> {
         match self {
             Function::External(ext) => ext(args),
-            Function::Scheme(_sym) => unimplemented!(),
+            Function::Scheme(_func) => unimplemented!(),
         }
     }
 }
@@ -69,7 +74,7 @@ impl fmt::Debug for Function {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Function::External(_) => write!(f, "External(?)"),
-            Function::Scheme(body) => write!(f, "Scheme({:?})", body),
+            Function::Scheme(func) => write!(f, "Scheme({:?})", func),
         }
     }
 }
@@ -99,8 +104,12 @@ impl Display for Symbol {
     }
 }
 
-fn scheme_binop(name: String, op: fn(i64, i64) -> i64, args: Vec<Symbol>) -> Symbol {
-    Symbol::Value(SchemeVal::Number(
+fn scheme_binop(
+    name: String,
+    op: fn(i64, i64) -> i64,
+    args: Vec<Symbol>,
+) -> InterpretResult<Symbol> {
+    Ok(Symbol::Value(SchemeVal::Number(
         args.into_iter()
             .map(|s| -> InterpretResult<_> {
                 s.into_value()
@@ -116,12 +125,11 @@ fn scheme_binop(name: String, op: fn(i64, i64) -> i64, args: Vec<Symbol>) -> Sym
                         expected: SchemeType::Number,
                     })
             })
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap()
+            .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .reduce(op)
-            .unwrap(),
-    ))
+            .unwrap_or(0),
+    )))
 }
 
 macro_rules! add_binop {
@@ -236,12 +244,12 @@ impl Interpreter {
             self.add_symbol(symbol, definition);
             Ok(None)
         } else {
-            let op = self
+            let func = self
                 .get_symbol(&name)?
                 .as_ref()
                 .ok_or(InterpretError::UnboundSymbol { symbol: name })?
                 .clone();
-            let op = op
+            let func = func
                 .as_function()
                 .ok_or(InterpretError::ExpectedFunctionCall { given: None })?;
 
@@ -255,7 +263,7 @@ impl Interpreter {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
-            Ok(Some(op.call(args)))
+            func.call(args).map(Some)
         }
     }
 }
@@ -298,6 +306,16 @@ mod tests {
     }
 
     #[test]
+    fn lambda() {
+        let src = r#"
+            (define two (lambda () 2))
+            (two)
+        "#;
+
+        check(src, Some(Symbol::Value(SchemeVal::Number(2))));
+    }
+
+    #[test]
     fn err_unbound_symbol() {
         check_err(
             "two",
@@ -317,7 +335,4 @@ mod tests {
             },
         );
     }
-
-    #[test]
-    fn err_() {}
 }
