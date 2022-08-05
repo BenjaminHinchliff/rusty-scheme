@@ -32,6 +32,8 @@ pub enum InterpretError {
     },
     #[error("Expected atom in define - given {given}")]
     ExpectedAtom { given: SchemeVal },
+    #[error("Argument to function cannot be None")]
+    ExpectedValue,
     #[error(
         "Invalid type in call to {function} - given {} but expected {expected}",
         option_to_string(given)
@@ -41,32 +43,33 @@ pub enum InterpretError {
         given: Option<Symbol>,
         expected: SchemeType,
     },
-    #[error(
-        "Expected function call but was given {}",
-        option_to_string(given)
-    )]
-    ExpectedFunctionCall { given: Option<SchemeVal> },
+    #[error("Expected function call but was given {}", option_to_string(given))]
+    ExpectedFunctionCall { given: Option<Symbol> },
 }
 
 pub type InterpretResult<T> = Result<T, InterpretError>;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Prototype {
-    pub name: String,
-    pub args: Vec<SchemeType>,
-}
-
 #[derive(Clone)]
 pub enum Function {
-    External(Prototype, fn(&[&SchemeVal]) -> SchemeVal),
-    Scheme(Prototype, Box<Symbol>),
+    External(fn(Vec<Symbol>) -> Symbol),
+    Scheme(Box<Symbol>),
+}
+
+impl Function {
+    pub fn call(&self, args: Vec<Symbol>) -> Symbol {
+        // TODO: verify args
+        match self {
+            Function::External(ext) => ext(args),
+            Function::Scheme(_sym) => unimplemented!(),
+        }
+    }
 }
 
 impl fmt::Debug for Function {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Function::External(proto, _) => write!(f, "External({:?})", proto),
-            Function::Scheme(proto, body) => write!(f, "Scheme({:?}, {:?})", proto, body),
+            Function::External(_) => write!(f, "External(?)"),
+            Function::Scheme(body) => write!(f, "Scheme({:?})", body),
         }
     }
 }
@@ -74,10 +77,8 @@ impl fmt::Debug for Function {
 impl PartialEq for Function {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Function::External(s_proto, _), Function::External(o_proto, _)) => s_proto == o_proto,
-            (Function::Scheme(s_proto, s_body), Function::Scheme(o_proto, o_body)) => {
-                s_proto == o_proto && s_body == o_body
-            }
+            (Function::External(_), Function::External(_)) => true,
+            (Function::Scheme(s), Function::Scheme(o)) => s == o,
             _ => false,
         }
     }
@@ -98,6 +99,42 @@ impl Display for Symbol {
     }
 }
 
+fn scheme_binop(name: String, op: fn(i64, i64) -> i64, args: Vec<Symbol>) -> Symbol {
+    Symbol::Value(SchemeVal::Number(
+        args.into_iter()
+            .map(|s| -> InterpretResult<_> {
+                s.into_value()
+                    .map_err(|e| InterpretError::InvalidType {
+                        function: name.clone(),
+                        given: Some(e),
+                        expected: SchemeType::Number,
+                    })?
+                    .into_number()
+                    .map_err(|e| InterpretError::InvalidType {
+                        function: name.clone(),
+                        given: Some(Symbol::Value(e)),
+                        expected: SchemeType::Number,
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .into_iter()
+            .reduce(op)
+            .unwrap(),
+    ))
+}
+
+macro_rules! add_binop {
+    ($globals:expr, $name:expr, $func:expr) => {
+        $globals.insert(
+            $name.to_string(),
+            Some(Symbol::Function(Function::External(|args| {
+                scheme_binop($name.to_string(), $func, args)
+            }))),
+        )
+    };
+}
+
 pub struct Interpreter {
     variables: Vec<HashMap<String, Option<Symbol>>>,
 }
@@ -110,8 +147,14 @@ impl Default for Interpreter {
 
 impl Interpreter {
     pub fn new() -> Self {
+        let mut globals = HashMap::new();
+        add_binop!(globals, "+", ops::Add::add);
+        add_binop!(globals, "-", ops::Sub::sub);
+        add_binop!(globals, "*", ops::Mul::mul);
+        add_binop!(globals, "/", ops::Div::div);
+
         Self {
-            variables: vec![HashMap::new()],
+            variables: vec![globals],
         }
     }
 
@@ -169,7 +212,9 @@ impl Interpreter {
             .next()
             .ok_or(InterpretError::ExpectedFunctionCall { given: None })?
             .into_atom()
-            .map_err(|e| InterpretError::ExpectedFunctionCall { given: Some(e) })?;
+            .map_err(|e| InterpretError::ExpectedFunctionCall {
+                given: Some(Symbol::Value(e)),
+            })?;
 
         if name == "define" {
             let symbol = iter
@@ -191,46 +236,26 @@ impl Interpreter {
             self.add_symbol(symbol, definition);
             Ok(None)
         } else {
-            let op = match name.as_str() {
-                "+" => ops::Add::add,
-                "-" => ops::Sub::sub,
-                "*" => ops::Mul::mul,
-                "/" => ops::Div::div,
-                _ => unimplemented!(),
-            };
+            let op = self
+                .get_symbol(&name)?
+                .as_ref()
+                .ok_or(InterpretError::UnboundSymbol { symbol: name })?
+                .clone();
+            let op = op
+                .as_function()
+                .ok_or(InterpretError::ExpectedFunctionCall { given: None })?;
 
-            let acc = iter
+            let args = iter
                 .map(|n| -> InterpretResult<_> {
-                    let n = match n {
+                    match n {
                         SchemeVal::Atom(sym) => self.get_symbol(&sym).cloned(),
                         n => self.interpret_one(n),
                     }?
-                    .ok_or_else(|| InterpretError::InvalidType {
-                        function: name.clone(),
-                        given: None,
-                        expected: SchemeType::Number,
-                    })?;
-                    n.clone()
-                        .as_value()
-                        .ok_or_else(|| InterpretError::InvalidType {
-                            function: name.clone(),
-                            given: Some(n.clone()),
-                            expected: SchemeType::Number,
-                        })?
-                        .as_number()
-                        .ok_or_else(|| InterpretError::InvalidType {
-                            function: name.clone(),
-                            given: Some(n),
-                            expected: SchemeType::Number,
-                        })
-                        .copied()
+                    .ok_or(InterpretError::ExpectedValue)
                 })
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .reduce(op)
-                .unwrap();
+                .collect::<Result<Vec<_>, _>>()?;
 
-            Ok(Some(Symbol::Value(SchemeVal::Number(acc))))
+            Ok(Some(op.call(args)))
         }
     }
 }
@@ -288,7 +313,7 @@ mod tests {
         check_err(
             "(2)",
             InterpretError::ExpectedFunctionCall {
-                given: Some(SchemeVal::Number(2)),
+                given: Some(Symbol::Value(SchemeVal::Number(2))),
             },
         );
     }
