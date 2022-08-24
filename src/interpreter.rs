@@ -51,21 +51,27 @@ pub type InterpretResult<T> = Result<T, InterpretError>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SchemeFunction {
-    args: Vec<SchemeType>,
-    body: Box<Symbol>,
+    bindings: Vec<String>,
+    body: SchemeVal,
 }
 
 #[derive(Clone)]
 pub enum Function {
-    External(fn(Vec<Symbol>) -> InterpretResult<Symbol>),
+    External(fn(Vec<Symbol>) -> InterpretResult<Option<Symbol>>),
     Scheme(SchemeFunction),
 }
 
 impl Function {
-    pub fn call(&self, args: Vec<Symbol>) -> InterpretResult<Symbol> {
+    pub fn call(
+        &self,
+        interpreter: &mut Interpreter,
+        args: Vec<Symbol>,
+    ) -> InterpretResult<Option<Symbol>> {
         match self {
             Function::External(ext) => ext(args),
-            Function::Scheme(_func) => unimplemented!(),
+            Function::Scheme(SchemeFunction { bindings, body }) => {
+                interpreter.interpret_one(body.clone())
+            }
         }
     }
 }
@@ -108,8 +114,8 @@ fn scheme_binop(
     name: String,
     op: fn(i64, i64) -> i64,
     args: Vec<Symbol>,
-) -> InterpretResult<Symbol> {
-    Ok(Symbol::Value(SchemeVal::Number(
+) -> InterpretResult<Option<Symbol>> {
+    Ok(Some(Symbol::Value(SchemeVal::Number(
         args.into_iter()
             .map(|s| -> InterpretResult<_> {
                 s.into_value()
@@ -129,7 +135,7 @@ fn scheme_binop(
             .into_iter()
             .reduce(op)
             .unwrap_or(0),
-    )))
+    ))))
 }
 
 macro_rules! add_binop {
@@ -164,6 +170,15 @@ impl Interpreter {
         Self {
             variables: vec![globals],
         }
+    }
+
+    fn add_binop(&mut self, name: &str, operation: fn(i64, i64) -> i64) {
+        self.add_symbol(
+            name.to_string(),
+            Some(Symbol::Function(Function::External(|args| {
+                scheme_binop(name.to_string(), operation, args)
+            }))),
+        )
     }
 
     pub fn interpret_str(&mut self, src: &str) -> InterpretResult<Option<Symbol>> {
@@ -224,46 +239,66 @@ impl Interpreter {
                 given: Some(Symbol::Value(e)),
             })?;
 
-        if name == "define" {
-            let symbol = iter
-                .next()
-                .ok_or(InterpretError::ImproperArgCount {
-                    function: "define".to_string(),
-                    given: 0,
-                    expected: 2,
-                })?
-                .into_atom()
-                .map_err(|e| InterpretError::ExpectedAtom { given: e })?;
-            let definition = if let Some(n) = iter.next() {
-                // TODO: find a way to use .map() here?
-                self.interpret_one(n)?
-            } else {
-                None
-            };
+        match &name[..] {
+            "define" => {
+                let symbol = iter
+                    .next()
+                    .ok_or(InterpretError::ImproperArgCount {
+                        function: "define".to_string(),
+                        given: 0,
+                        expected: 2,
+                    })?
+                    .into_atom()
+                    .map_err(|e| InterpretError::ExpectedAtom { given: e })?;
+                let definition = if let Some(n) = iter.next() {
+                    // TODO: find a way to use .map() here?
+                    self.interpret_one(n)?
+                } else {
+                    None
+                };
 
-            self.add_symbol(symbol, definition);
-            Ok(None)
-        } else {
-            let func = self
-                .get_symbol(&name)?
-                .as_ref()
-                .ok_or(InterpretError::UnboundSymbol { symbol: name })?
-                .clone();
-            let func = func
-                .as_function()
-                .ok_or(InterpretError::ExpectedFunctionCall { given: None })?;
+                self.add_symbol(symbol, definition);
+                Ok(None)
+            }
+            "lambda" => {
+                let bindings: Vec<_> = iter
+                    .next()
+                    .unwrap()
+                    .into_list()
+                    .unwrap()
+                    .0
+                    .into_iter()
+                    .map(|b| b.into_atom().unwrap())
+                    .collect();
 
-            let args = iter
-                .map(|n| -> InterpretResult<_> {
-                    match n {
-                        SchemeVal::Atom(sym) => self.get_symbol(&sym).cloned(),
-                        n => self.interpret_one(n),
-                    }?
-                    .ok_or(InterpretError::ExpectedValue)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+                let body = iter.next().unwrap();
+                Ok(Some(Symbol::Function(Function::Scheme(SchemeFunction {
+                    bindings,
+                    body,
+                }))))
+            }
+            _ => {
+                let func = self
+                    .get_symbol(&name)?
+                    .as_ref()
+                    .ok_or(InterpretError::UnboundSymbol { symbol: name })?
+                    .clone();
+                let func = func
+                    .as_function()
+                    .ok_or(InterpretError::ExpectedFunctionCall { given: None })?;
 
-            func.call(args).map(Some)
+                let args = iter
+                    .map(|n| -> InterpretResult<_> {
+                        match n {
+                            SchemeVal::Atom(sym) => self.get_symbol(&sym).cloned(),
+                            n => self.interpret_one(n),
+                        }?
+                        .ok_or(InterpretError::ExpectedValue)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                func.call(args).map(Some)
+            }
         }
     }
 }
