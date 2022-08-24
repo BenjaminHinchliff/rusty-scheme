@@ -49,7 +49,7 @@ pub enum InterpretError {
 
 pub type InterpretResult<T> = Result<T, InterpretError>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemeFunction {
     bindings: Vec<String>,
     body: SchemeVal,
@@ -70,7 +70,13 @@ impl Function {
         match self {
             Function::External(ext) => ext(args),
             Function::Scheme(SchemeFunction { bindings, body }) => {
-                interpreter.interpret_one(body.clone())
+                interpreter.push_scope();
+                for (binding, arg) in bindings.iter().zip(args) {
+                    interpreter.add_symbol(binding.clone(), Some(arg));
+                }
+                let result = interpreter.interpret_one(body.clone());
+                interpreter.pop_scope();
+                result
             }
         }
     }
@@ -172,14 +178,14 @@ impl Interpreter {
         }
     }
 
-    fn add_binop(&mut self, name: &str, operation: fn(i64, i64) -> i64) {
-        self.add_symbol(
-            name.to_string(),
-            Some(Symbol::Function(Function::External(|args| {
-                scheme_binop(name.to_string(), operation, args)
-            }))),
-        )
-    }
+    // fn add_binop(&mut self, name: &str, operation: fn(i64, i64) -> i64) {
+    //     self.add_symbol(
+    //         name.to_string(),
+    //         Some(Symbol::Function(Function::External(|args| {
+    //             scheme_binop(name.to_string(), operation, args)
+    //         }))),
+    //     )
+    // }
 
     pub fn interpret_str(&mut self, src: &str) -> InterpretResult<Option<Symbol>> {
         let ast = Parser::new(src).parse()?;
@@ -214,18 +220,27 @@ impl Interpreter {
         }
     }
 
+    fn push_scope(&mut self) {
+        self.variables.push(HashMap::new())
+    }
+
+    fn pop_scope(&mut self) {
+        self.variables.pop();
+    }
+
     fn add_symbol(&mut self, name: String, definition: Option<Symbol>) {
         self.variables.last_mut().unwrap().insert(name, definition);
     }
 
     fn get_symbol(&self, name: &str) -> InterpretResult<&Option<Symbol>> {
-        self.variables
-            .last()
-            .unwrap()
-            .get(name)
-            .ok_or_else(|| InterpretError::UnboundSymbol {
-                symbol: name.to_string(),
-            })
+        for scope in self.variables.iter().rev() {
+            if let Some(symbol) = scope.get(name) {
+                return Ok(symbol);
+            }
+        }
+        Err(InterpretError::UnboundSymbol {
+            symbol: name.to_string(),
+        })
     }
 
     fn interpret_call(&mut self, list: Vec<SchemeVal>) -> InterpretResult<Option<Symbol>> {
@@ -297,7 +312,7 @@ impl Interpreter {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 
-                func.call(args).map(Some)
+                func.call(self, args)
             }
         }
     }
@@ -343,11 +358,11 @@ mod tests {
     #[test]
     fn lambda() {
         let src = r#"
-            (define two (lambda () 2))
-            (two)
+            (define two (lambda (n) (* n 2)))
+            (two 8)
         "#;
 
-        check(src, Some(Symbol::Value(SchemeVal::Number(2))));
+        check(src, Some(Symbol::Value(SchemeVal::Number(16))));
     }
 
     #[test]
