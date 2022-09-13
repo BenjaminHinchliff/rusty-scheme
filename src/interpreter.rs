@@ -47,7 +47,7 @@ pub enum InterpretError {
     ExpectedFunctionCall { given: Option<Symbol> },
 }
 
-pub type InterpretResult<T> = Result<T, InterpretError>;
+pub type InterpretResult = Result<Option<Symbol>, InterpretError>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemeFunction {
@@ -57,16 +57,12 @@ pub struct SchemeFunction {
 
 #[derive(Clone)]
 pub enum Function {
-    External(fn(Vec<Symbol>) -> InterpretResult<Option<Symbol>>),
+    External(fn(Vec<Symbol>) -> InterpretResult),
     Scheme(SchemeFunction),
 }
 
 impl Function {
-    pub fn call(
-        &self,
-        interpreter: &mut Interpreter,
-        args: Vec<Symbol>,
-    ) -> InterpretResult<Option<Symbol>> {
+    pub fn call(&self, interpreter: &mut Interpreter, args: Vec<Symbol>) -> InterpretResult {
         match self {
             Function::External(ext) => ext(args),
             Function::Scheme(SchemeFunction { bindings, body }) => {
@@ -116,14 +112,10 @@ impl Display for Symbol {
     }
 }
 
-fn scheme_binop(
-    name: String,
-    op: fn(i64, i64) -> i64,
-    args: Vec<Symbol>,
-) -> InterpretResult<Option<Symbol>> {
+fn scheme_binop(name: String, op: fn(i64, i64) -> i64, args: Vec<Symbol>) -> InterpretResult {
     Ok(Some(Symbol::Value(SchemeVal::Number(
         args.into_iter()
-            .map(|s| -> InterpretResult<_> {
+            .map(|s| {
                 s.into_value()
                     .map_err(|e| InterpretError::InvalidType {
                         function: name.clone(),
@@ -172,12 +164,45 @@ impl Interpreter {
         add_binop!(globals, "-", ops::Sub::sub);
         add_binop!(globals, "*", ops::Mul::mul);
         add_binop!(globals, "/", ops::Div::div);
+        globals.insert(
+            "=".to_string(),
+            Some(Symbol::Function(Function::External(|args| {
+                if args.len() == 2 {
+                    return Err(InterpretError::ImproperArgCount {
+                        function: "=".to_string(),
+                        given: args.len(),
+                        expected: 2,
+                    });
+                }
+
+                let cond = *args[0].as_value().unwrap().as_bool().unwrap();
+
+                Ok(args.into_iter().nth(if cond { 1 } else { 2 }))
+            }))),
+        );
+        globals.insert(
+            "if".to_string(),
+            Some(Symbol::Function(Function::External(|args| {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(InterpretError::ImproperArgCount {
+                        function: "if".to_string(),
+                        given: args.len(),
+                        expected: 2,
+                    });
+                }
+
+                let cond = *args[0].as_value().unwrap().as_bool().unwrap();
+
+                Ok(args.into_iter().nth(if cond { 1 } else { 2 }))
+            }))),
+        );
 
         Self {
             variables: vec![globals],
         }
     }
 
+    // doesn't compile due to implicit casting not working properly
     // fn add_binop(&mut self, name: &str, operation: fn(i64, i64) -> i64) {
     //     self.add_symbol(
     //         name.to_string(),
@@ -187,13 +212,13 @@ impl Interpreter {
     //     )
     // }
 
-    pub fn interpret_str(&mut self, src: &str) -> InterpretResult<Option<Symbol>> {
+    pub fn interpret_str(&mut self, src: &str) -> InterpretResult {
         let ast = Parser::new(src).parse()?;
 
         self.interpret(ast)
     }
 
-    pub fn interpret(&mut self, ast: Vec<SchemeVal>) -> InterpretResult<Option<Symbol>> {
+    pub fn interpret(&mut self, ast: Vec<SchemeVal>) -> InterpretResult {
         let mut symbol = None;
         for val in ast {
             symbol = self.interpret_one(val)?;
@@ -201,7 +226,7 @@ impl Interpreter {
         Ok(symbol)
     }
 
-    pub fn interpret_one(&mut self, ast: SchemeVal) -> InterpretResult<Option<Symbol>> {
+    pub fn interpret_one(&mut self, ast: SchemeVal) -> InterpretResult {
         match ast {
             s @ SchemeVal::String(_) => Ok(Some(Symbol::Value(s))),
             n @ SchemeVal::Number(_) => Ok(Some(Symbol::Value(n))),
@@ -232,7 +257,7 @@ impl Interpreter {
         self.variables.last_mut().unwrap().insert(name, definition);
     }
 
-    fn get_symbol(&self, name: &str) -> InterpretResult<&Option<Symbol>> {
+    fn get_symbol(&self, name: &str) -> Result<&Option<Symbol>, InterpretError> {
         for scope in self.variables.iter().rev() {
             if let Some(symbol) = scope.get(name) {
                 return Ok(symbol);
@@ -243,7 +268,7 @@ impl Interpreter {
         })
     }
 
-    fn interpret_call(&mut self, list: Vec<SchemeVal>) -> InterpretResult<Option<Symbol>> {
+    fn interpret_call(&mut self, list: Vec<SchemeVal>) -> InterpretResult {
         let mut iter = list.into_iter();
 
         let name = iter
@@ -303,7 +328,7 @@ impl Interpreter {
                     .ok_or(InterpretError::ExpectedFunctionCall { given: None })?;
 
                 let args = iter
-                    .map(|n| -> InterpretResult<_> {
+                    .map(|n| {
                         match n {
                             SchemeVal::Atom(sym) => self.get_symbol(&sym).cloned(),
                             n => self.interpret_one(n),
@@ -358,11 +383,21 @@ mod tests {
     #[test]
     fn lambda() {
         let src = r#"
-            (define two (lambda (n) (* n 2)))
-            (two 8)
+            (define times-two (lambda (n) (* n 2)))
+            (times-two 8)
         "#;
 
         check(src, Some(Symbol::Value(SchemeVal::Number(16))));
+    }
+
+    #[test]
+    fn if_statement() {
+        let src = r#"
+            (define one? (lambda (n) (if (= n 1) 1 0)))
+            (one? 1)
+        "#;
+
+        check(src, Some(Symbol::Value(SchemeVal::Number(1))));
     }
 
     #[test]
