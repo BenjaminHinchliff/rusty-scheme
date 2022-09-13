@@ -167,7 +167,7 @@ impl Interpreter {
         globals.insert(
             "=".to_string(),
             Some(Symbol::Function(Function::External(|args| {
-                if args.len() == 2 {
+                if args.len() != 2 {
                     return Err(InterpretError::ImproperArgCount {
                         function: "=".to_string(),
                         given: args.len(),
@@ -175,9 +175,15 @@ impl Interpreter {
                     });
                 }
 
-                let cond = *args[0].as_value().unwrap().as_bool().unwrap();
+                let mut args = args
+                    .iter()
+                    .map(|a| *a.as_value().unwrap().as_number().unwrap());
 
-                Ok(args.into_iter().nth(if cond { 1 } else { 2 }))
+                let first = args.next().unwrap();
+
+                Ok(Some(Symbol::Value(SchemeVal::Bool(
+                    args.all(|a| first == a),
+                ))))
             }))),
         );
         globals.insert(
